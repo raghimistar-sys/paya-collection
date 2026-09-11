@@ -34,7 +34,10 @@ const APP_FIELDS = [
   { key: "user_id", label: "شناسه کاربر" },
   { key: "customer_name", label: "نام مشتری" },
   { key: "mobile", label: "موبایل" },
+  { key: "essential_phone", label: "شماره ضروری" },
   { key: "national_code", label: "کد ملی" },
+  { key: "state_id", label: "شناسه استان/شهر" },
+  { key: "state_name", label: "استان/شهر" },
   { key: "installment_number", label: "شماره قسط" },
   { key: "raw_amount", label: "مبلغ خام" },
   { key: "amount_excl_tax", label: "مبلغ بدون مالیات" },
@@ -42,6 +45,9 @@ const APP_FIELDS = [
   { key: "late_fee_excl_tax", label: "جریمه بدون مالیات" },
   { key: "late_fee_incl_tax", label: "جریمه با مالیات" },
   { key: "payable_amount", label: "مبلغ قابل پرداخت" },
+  { key: "partner_paid_amount", label: "مبلغ پرداخت‌شده پارتنر (اختیاری/آتی)" },
+  { key: "partner_unpaid_amount", label: "مبلغ پرداخت‌نشده پارتنر (اختیاری/آتی)" },
+  { key: "partner_status", label: "وضعیت پارتنر (اختیاری/آتی)" },
   { key: "due_date", label: "تاریخ سررسید" },
   { key: "status", label: "وضعیت پرداخت (۰ = پرداخت‌نشده)" },
   { key: "paid_at", label: "تاریخ پرداخت" },
@@ -53,24 +59,85 @@ const APP_FIELDS = [
 // Auto-guess mapping for common column names, incl. the real schema aliases
 // (loan_installments.*, Users__name, Users__national_code, Users__mobile, ...)
 const HEADER_GUESS = {
-  id: "installment_id", installment_id: "installment_id",
-  loan_id: "loan_id", user_id: "user_id",
-  number: "installment_number", installment_number: "installment_number",
-  raw_amount: "raw_amount",
-  amount_excl_tax: "amount_excl_tax", amount_incl_tax: "amount_incl_tax",
-  late_fee_excl_tax: "late_fee_excl_tax", late_fee_incl_tax: "late_fee_incl_tax",
-  payable_amount: "payable_amount",
-  due_date: "due_date", status: "status", paid_at: "paid_at",
-  provider_id: "provider_id", provider_name: "provider_name",
-  "users__name": "customer_name", name: "customer_name",
-  "users__national_code": "national_code", national_code: "national_code",
-  "users__mobile": "mobile", mobile: "mobile",
-  "users__essential_phone": "mobile", essential_phone: "mobile",
+  "id": "installment_id",
+  "installment id": "installment_id",
+  "loan id": "loan_id",
+  "user id": "user_id",
+  "number": "installment_number",
+  "installment number": "installment_number",
+  "raw amount": "raw_amount",
+  "amount excl tax": "amount_excl_tax",
+  "amount incl tax": "amount_incl_tax",
+  "late fee excl tax": "late_fee_excl_tax",
+  "late fee incl tax": "late_fee_incl_tax",
+  "payable amount": "payable_amount",
+  "partner paid amount": "partner_paid_amount",
+  "partner unpaid amount": "partner_unpaid_amount",
+  "partner status": "partner_status",
+  "due date": "due_date",
+  "status": "status",
+  "paid at": "paid_at",
+  "provider id": "provider_id",
+  "provider name": "provider_name",
+
+  "users name": "customer_name",
+  "name": "customer_name",
+  "customer name": "customer_name",
+
+  "users national code": "national_code",
+  "national code": "national_code",
+  "کد ملی": "national_code",
+
+  "users mobile": "mobile",
+  "mobile": "mobile",
+  "phone": "mobile",
+  "شماره موبایل": "mobile",
+  "موبایل": "mobile",
+
+  "users essential phone": "essential_phone",
+  "essential phone": "essential_phone",
+  "emergency phone": "essential_phone",
+  "شماره ضروری": "essential_phone",
+
+  "users state id": "state_id",
+  "states id": "state_id",
+  "state id": "state_id",
+
+  "states name": "state_name",
+  "state name": "state_name",
+  "province": "state_name",
+  "province name": "state_name",
+  "city": "state_name",
+  "city name": "state_name",
+  "استان": "state_name",
+  "شهر": "state_name",
 };
 
+function normalizeHeader(header) {
+  return String(header || "")
+    .replace(/â†’/g, " ")
+    .replace(/→/g, " ")
+    .replace(/[_\.\-\/\()\[\]]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 function guessField(header) {
-  const norm = String(header || "").trim().toLowerCase();
-  return HEADER_GUESS[norm] || "__ignore__";
+  const norm = normalizeHeader(header);
+  if (HEADER_GUESS[norm]) return HEADER_GUESS[norm];
+
+  // Flexible matching for exports whose aliases contain prefixes/suffixes.
+  if (norm.includes("essential phone")) return "essential_phone";
+  if (norm.includes("national code")) return "national_code";
+  if (norm.includes("states") && norm.endsWith("name")) return "state_name";
+  if (norm.includes("state") && norm.endsWith("id")) return "state_id";
+  if (norm.includes("users") && norm.endsWith("mobile")) return "mobile";
+  if (norm.includes("users") && norm.endsWith("name")) return "customer_name";
+  if (norm.includes("partner paid amount")) return "partner_paid_amount";
+  if (norm.includes("partner unpaid amount")) return "partner_unpaid_amount";
+  if (norm.includes("partner status")) return "partner_status";
+  return "__ignore__";
 }
 
 /* ============================================================
@@ -128,10 +195,14 @@ const isUnpaid = (status) => String(status) === "0";
    ============================================================ */
 
 function matchKey(rec) {
+  const hasBusinessKey = rec.national_code && rec.loan_id !== undefined && rec.loan_id !== null && rec.loan_id !== "" && rec.installment_number !== undefined && rec.installment_number !== null && rec.installment_number !== "";
+  if (hasBusinessKey) {
+    return "nk:" + [rec.national_code, rec.loan_id, rec.installment_number].join("|");
+  }
   if (rec.installment_id !== undefined && rec.installment_id !== null && rec.installment_id !== "") {
     return "id:" + rec.installment_id;
   }
-  return "nk:" + [rec.national_code, rec.loan_id, rec.installment_number].join("|");
+  return null;
 }
 
 function applyMapping(row, mapping) {
@@ -163,10 +234,11 @@ function runImport(existingInstallments, csvRows, mapping, providerMap) {
     try {
       const mapped = applyMapping(row, mapping);
       const hasId = mapped.installment_id !== undefined && mapped.installment_id !== null && mapped.installment_id !== "";
-      const hasFallback = mapped.national_code && mapped.loan_id !== undefined && mapped.loan_id !== null && mapped.installment_number !== undefined && mapped.installment_number !== null;
-      if (!hasId && !hasFallback) { errors++; return; }
+      const hasBusinessKey = mapped.national_code && mapped.loan_id !== undefined && mapped.loan_id !== null && mapped.loan_id !== "" && mapped.installment_number !== undefined && mapped.installment_number !== null && mapped.installment_number !== "";
+      if (!hasBusinessKey && !hasId) { errors++; return; }
 
       const key = matchKey(mapped);
+      if (!key) { errors++; return; }
       const i = idx.get(key);
 
       if (i === undefined) {
@@ -177,7 +249,10 @@ function runImport(existingInstallments, csvRows, mapping, providerMap) {
           user_id: mapped.user_id ?? null,
           customer_name: mapped.customer_name ?? null,
           mobile: mapped.mobile ?? null,
+          essential_phone: mapped.essential_phone ?? null,
           national_code: mapped.national_code ?? null,
+          state_id: mapped.state_id ?? null,
+          state_name: mapped.state_name ?? null,
           installment_number: mapped.installment_number ?? null,
           raw_amount: mapped.raw_amount ?? null,
           amount_excl_tax: mapped.amount_excl_tax ?? null,
@@ -185,6 +260,9 @@ function runImport(existingInstallments, csvRows, mapping, providerMap) {
           late_fee_excl_tax: mapped.late_fee_excl_tax ?? null,
           late_fee_incl_tax: mapped.late_fee_incl_tax ?? null,
           payable_amount: mapped.payable_amount ?? null,
+          partner_paid_amount: mapped.partner_paid_amount ?? null,
+          partner_unpaid_amount: mapped.partner_unpaid_amount ?? null,
+          partner_status: mapped.partner_status ?? null,
           due_date: mapped.due_date ?? null,
           status: mapped.status ?? null,
           paid_at: mapped.paid_at ?? null,
@@ -217,6 +295,9 @@ function runImport(existingInstallments, csvRows, mapping, providerMap) {
           late_fee_excl_tax: mapped.late_fee_excl_tax ?? existing.late_fee_excl_tax,
           late_fee_incl_tax: mapped.late_fee_incl_tax ?? existing.late_fee_incl_tax,
           payable_amount: mapped.payable_amount ?? existing.payable_amount,
+          partner_paid_amount: mapped.partner_paid_amount ?? existing.partner_paid_amount,
+          partner_unpaid_amount: mapped.partner_unpaid_amount ?? existing.partner_unpaid_amount,
+          partner_status: mapped.partner_status ?? existing.partner_status,
           due_date: mapped.due_date ?? existing.due_date,
           status: (mapped.status !== undefined && mapped.status !== null) ? mapped.status : existing.status,
           paid_at: mapped.paid_at ?? existing.paid_at,
@@ -224,7 +305,10 @@ function runImport(existingInstallments, csvRows, mapping, providerMap) {
           provider_name: providerMap[mapped.provider_id ?? existing.provider_id] || existing.provider_name,
           customer_name: mapped.customer_name || existing.customer_name,
           mobile: mapped.mobile || existing.mobile,
+          essential_phone: mapped.essential_phone || existing.essential_phone,
           national_code: mapped.national_code || existing.national_code,
+          state_id: mapped.state_id ?? existing.state_id,
+          state_name: mapped.state_name || existing.state_name,
           updated_at: stamp,
         };
         list[i] = merged;
@@ -914,6 +998,8 @@ function InstallmentDetailDrawer({ installment, onClose, agents, currentUser, ca
                 <DetailRow label="جریمه" value={fmtNum(installment.late_fee_incl_tax) + " ریال"} />
                 <DetailRow label="مبلغ قابل پرداخت" value={fmtNum(installment.payable_amount) + " ریال"} />
                 <DetailRow label="موبایل" value={installment.mobile} />
+                <DetailRow label="شماره ضروری" value={installment.essential_phone || "—"} />
+                <DetailRow label="استان/شهر" value={installment.state_name || "—"} />
                 <DetailRow label="کارشناس مسئول" value={agentName} />
                 <DetailRow label="تعداد تماس" value={fmtNum(installment.call_count || 0)} />
                 <DetailRow label="آخرین تماس" value={fmtJalaliDateTime(installment.last_contact_at)} />
@@ -1159,7 +1245,9 @@ function TodayFollowupsPage({ state, currentUser, scopeInstallments, agents, ope
   const columns = [
     { key: "customer_name", header: "نام مشتری", searchValue: (r) => r.customer_name, render: (r) => r.customer_name || "—" },
     { key: "mobile", header: "موبایل", searchValue: (r) => r.mobile },
+    { key: "essential_phone", header: "شماره ضروری", searchValue: (r) => r.essential_phone, render: (r) => r.essential_phone || "—" },
     { key: "national_code", header: "کد ملی", searchValue: (r) => r.national_code },
+    { key: "state_name", header: "استان/شهر", searchValue: (r) => r.state_name, render: (r) => r.state_name || "—" },
     { key: "loan_id", header: "Loan ID", searchValue: (r) => r.loan_id },
     { key: "installment_number", header: "شماره قسط" },
     { key: "due_date", header: "تاریخ سررسید", render: (r) => fmtJalali(r.due_date) },
@@ -1475,6 +1563,12 @@ function SyncPage({ state, updateState, currentUser }) {
   const [importResult, setImportResult] = useState(null);
   const fileInputRef = useRef(null);
 
+  const mappedFields = new Set(Object.values(mapping));
+  const hasBusinessIdentityMapping = mappedFields.has("national_code") && mappedFields.has("loan_id") && mappedFields.has("installment_number");
+  const hasIdMapping = mappedFields.has("installment_id");
+  const canIdentifyRows = hasBusinessIdentityMapping || hasIdMapping;
+  const hasQueueFields = mappedFields.has("due_date") && mappedFields.has("status");
+
   function handleFile(file) {
     if (!file) return;
     setParseError("");
@@ -1610,9 +1704,17 @@ function SyncPage({ state, updateState, currentUser }) {
                 </div>
               ))}
             </div>
+            <div className="mt-4 space-y-2 rounded-xl bg-gray-50 p-3 text-[12px]">
+              <p className={canIdentifyRows ? "text-emerald-600" : "text-rose-600"}>
+                {canIdentifyRows ? "✓ کلید شناسایی رکورد آماده است" : "✕ برای شناسایی رکورد، حداقل «کد ملی + Loan ID + شماره قسط» یا Installment ID را نگاشت کنید."}
+              </p>
+              <p className={hasQueueFields ? "text-emerald-600" : "text-amber-600"}>
+                {hasQueueFields ? "✓ تاریخ سررسید و Status برای صف پیگیری آماده است" : "⚠ برای اینکه پیگیری سررسیدها درست کار کند، Due Date و Status را هم نگاشت کنید."}
+              </p>
+            </div>
             <div className="mt-5 flex justify-between">
               <GhostButton onClick={reset}>انصراف</GhostButton>
-              <PrimaryButton onClick={() => setStep(3)}>ادامه به پیش‌نمایش</PrimaryButton>
+              <PrimaryButton disabled={!canIdentifyRows} onClick={() => setStep(3)}>ادامه به پیش‌نمایش</PrimaryButton>
             </div>
           </div>
         )}
