@@ -33,6 +33,8 @@ const APP_FIELDS = [
   { key: "loan_id", label: "شناسه وام (Loan ID)" },
   { key: "user_id", label: "شناسه کاربر" },
   { key: "customer_name", label: "نام مشتری" },
+  { key: "first_name", label: "نام (اختیاری)" },
+  { key: "last_name", label: "نام خانوادگی (اختیاری)" },
   { key: "mobile", label: "موبایل" },
   { key: "essential_phone", label: "شماره ضروری" },
   { key: "national_code", label: "کد ملی" },
@@ -83,6 +85,10 @@ const HEADER_GUESS = {
   "users name": "customer_name",
   "name": "customer_name",
   "customer name": "customer_name",
+  "users first name": "first_name",
+  "first name": "first_name",
+  "users last name": "last_name",
+  "last name": "last_name",
 
   "users national code": "national_code",
   "national code": "national_code",
@@ -133,6 +139,8 @@ function guessField(header) {
   if (norm.includes("states") && norm.endsWith("name")) return "state_name";
   if (norm.includes("state") && norm.endsWith("id")) return "state_id";
   if (norm.includes("users") && norm.endsWith("mobile")) return "mobile";
+  if (norm.includes("users") && norm.endsWith("first name")) return "first_name";
+  if (norm.includes("users") && norm.endsWith("last name")) return "last_name";
   if (norm.includes("users") && norm.endsWith("name")) return "customer_name";
   if (norm.includes("partner paid amount")) return "partner_paid_amount";
   if (norm.includes("partner unpaid amount")) return "partner_unpaid_amount";
@@ -216,6 +224,10 @@ function applyMapping(row, mapping) {
   });
   if (out.due_date) out.due_date = toDateOnly(out.due_date);
   if (out.paid_at) out.paid_at = toDateOnly(out.paid_at);
+  if (!out.customer_name) {
+    const fullName = [out.first_name, out.last_name].filter(Boolean).join(" ").trim();
+    if (fullName) out.customer_name = fullName;
+  }
   if (out.provider_id !== undefined && out.provider_id !== null && out.provider_id !== "") {
     const n = Number(out.provider_id);
     out.provider_id = isNaN(n) ? out.provider_id : n;
@@ -248,6 +260,8 @@ function runImport(existingInstallments, csvRows, mapping, providerMap) {
           loan_id: mapped.loan_id ?? null,
           user_id: mapped.user_id ?? null,
           customer_name: mapped.customer_name ?? null,
+          first_name: mapped.first_name ?? null,
+          last_name: mapped.last_name ?? null,
           mobile: mapped.mobile ?? null,
           essential_phone: mapped.essential_phone ?? null,
           national_code: mapped.national_code ?? null,
@@ -304,6 +318,8 @@ function runImport(existingInstallments, csvRows, mapping, providerMap) {
           provider_id: (mapped.provider_id ?? existing.provider_id),
           provider_name: providerMap[mapped.provider_id ?? existing.provider_id] || existing.provider_name,
           customer_name: mapped.customer_name || existing.customer_name,
+          first_name: mapped.first_name || existing.first_name,
+          last_name: mapped.last_name || existing.last_name,
           mobile: mapped.mobile || existing.mobile,
           essential_phone: mapped.essential_phone || existing.essential_phone,
           national_code: mapped.national_code || existing.national_code,
@@ -1587,7 +1603,9 @@ function SyncPage({ state, updateState, currentUser }) {
       const initialMapping = {};
       headers.forEach((h) => {
         const savedMatch = state.savedMapping && state.savedMapping[h];
-        initialMapping[h] = savedMatch || guessField(h);
+        const guessed = guessField(h);
+        // Known current headers must override stale mappings saved by older app versions.
+        initialMapping[h] = guessed !== "__ignore__" ? guessed : (savedMatch || "__ignore__");
       });
       setMapping(initialMapping);
       setStep(2);
